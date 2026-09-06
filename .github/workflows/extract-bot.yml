@@ -1,0 +1,171 @@
+```yaml
+name: Extract Smiley Cymor MD
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "Smiley-Cymor-MD.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf _bot_extract
+          mkdir -p _bot_extract
+
+          unzip -o "Smiley-Cymor-MD.zip" -d _bot_extract
+
+          echo "Extracted files:"
+          find _bot_extract -maxdepth 3 -type f | sort
+
+      - name: Detect bot directory
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "_bot_extract/bot/package.json" ]; then
+            echo "BOT_ROOT=_bot_extract/bot" >> "$GITHUB_ENV"
+          elif [ -f "_bot_extract/package.json" ]; then
+            echo "BOT_ROOT=_bot_extract" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: Could not find package.json in the ZIP."
+            exit 1
+          fi
+
+      - name: Prepare repository
+        shell: bash
+        run: |
+          set -e
+
+          BOT_ROOT="$BOT_ROOT"
+
+          # Preserve GitHub workflow files.
+          mkdir -p _github_backup
+
+          if [ -d ".github" ]; then
+            cp -a .github _github_backup/
+          fi
+
+          # Remove the uploaded ZIP and extracted temporary directory.
+          rm -f "Smiley-Cymor-MD.zip"
+
+          # Remove existing repository files except Git metadata.
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            ! -name "_bot_extract" \
+            ! -name "_github_backup" \
+            -exec rm -rf {} +
+
+          # Copy the actual bot contents into repository root.
+          cp -a "$BOT_ROOT"/. .
+
+          # Restore GitHub workflows.
+          if [ -d "_github_backup/.github" ]; then
+            rm -rf .github
+            cp -a "_github_backup/.github" .github
+          fi
+
+          rm -rf _bot_extract _github_backup
+
+      - name: Protect sensitive/runtime files
+        shell: bash
+        run: |
+          set -e
+
+          cat > .gitignore <<'EOF'
+          # Dependencies
+          node_modules/
+
+          # Environment/secrets
+          .env
+          .env.*
+          !.env.example
+
+          # WhatsApp/Baileys authentication
+          session/
+          auth_info_baileys/
+          auth_info/
+          creds.json
+          *.session
+          *.session.json
+
+          # Runtime data
+          logs/
+          *.log
+
+          # Temporary files
+          tmp/
+          temp/
+          .cache/
+
+          # OS/editor files
+          .DS_Store
+          Thumbs.db
+          .idea/
+          .vscode/
+          EOF
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run bot audit
+        run: npm run audit
+        continue-on-error: true
+
+      - name: Remove dependencies before commit
+        run: rm -rf node_modules
+
+      - name: Check repository
+        shell: bash
+        run: |
+          echo "Repository contents:"
+          find . -maxdepth 2 -type f \
+            ! -path "./.git/*" \
+            ! -path "./.github/*" \
+            | sort | head -200
+
+          echo ""
+          echo "Package:"
+          cat package.json
+
+      - name: Commit extracted bot
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Extract Smiley Cymor MD"
+
+          git push
+```
